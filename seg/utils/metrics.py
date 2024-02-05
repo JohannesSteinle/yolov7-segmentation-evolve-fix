@@ -16,7 +16,9 @@ from utils import TryExcept, threaded
 
 def fitness(x):
     # Model fitness as a weighted combination of metrics
-    w = [0.0, 0.0, 0.1, 0.9]  # weights for [P, R, mAP@0.5, mAP@0.5:0.95]
+    w = np.array([0.0, 0.0, 0.1, 0.9])  # Convert weights to a NumPy array
+    x = np.array(x)  # Ensure x is a NumPy array
+    print(f"Type of x: {type(x)}, Shape of x: {x.shape if hasattr(x, 'shape') else 'N/A'}")
     return (x[:, :4] * w).sum(1)
 
 

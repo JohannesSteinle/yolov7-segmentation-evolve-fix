@@ -930,10 +930,14 @@ def strip_optimizer(f='best.pt', s=''):  # from utils.general import *; strip_op
 def print_mutation(results, hyp, save_dir, bucket, prefix=colorstr('evolve: ')):
     evolve_csv = save_dir / 'evolve.csv'
     evolve_yaml = save_dir / 'hyp_evolve.yaml'
-    keys = ('metrics/precision', 'metrics/recall', 'metrics/mAP_0.5', 'metrics/mAP_0.5:0.95', 'val/box_loss',
-            'val/obj_loss', 'val/cls_loss') + tuple(hyp.keys())  # [results + hyps]
+    keys = ('metrics/precision(B)', 'metrics/recall(B)', 'metrics/mAP_0.5(B)', 'metrics/mAP_0.5:0.95(B)', 'metrics/precision(M)', 'metrics/recall(M)', 'metrics/mAP_0.5(M)', 'metrics/mAP_0.5:0.95(M)', 'val/box_loss',
+            'val/obj_loss', 'val/cls_loss', 'val/seg_loss') + tuple(hyp.keys())  # [results + hyps]
     keys = tuple(x.strip() for x in keys)
+    print("Keys: ", keys)
+    print("Results: ", results)
     vals = results + tuple(hyp.values())
+    print("Vals: ", vals)
+
     n = len(keys)
 
     # Download (optional)
@@ -945,7 +949,7 @@ def print_mutation(results, hyp, save_dir, bucket, prefix=colorstr('evolve: ')):
     # Log to evolve.csv
     s = '' if evolve_csv.exists() else (('%20s,' * n % keys).rstrip(',') + '\n')  # add header
     with open(evolve_csv, 'a') as f:
-        f.write(s + ('%20.5g,' * n % vals).rstrip(',') + '\n')
+        f.write(s + ('{:<20.5g},' * len(vals)).format(*vals).rstrip(',') + '\n')
 
     # Save yaml
     with open(evolve_yaml, 'w') as f:
@@ -953,9 +957,20 @@ def print_mutation(results, hyp, save_dir, bucket, prefix=colorstr('evolve: ')):
         data = data.rename(columns=lambda x: x.strip())  # strip keys
         i = np.argmax(fitness(data.values[:, :4]))  #
         generations = len(data)
-        f.write('# YOLOv5 Hyperparameter Evolution Results\n' + f'# Best generation: {i}\n' +
-                f'# Last generation: {generations - 1}\n' + '# ' + ', '.join(f'{x.strip():>20s}' for x in keys[:7]) +
-                '\n' + '# ' + ', '.join(f'{x:>20.5g}' for x in data.values[i, :7]) + '\n\n')
+        f.write(
+            "# YOLOv5 Hyperparameter Evolution Results\n"
+            + f"# Best generation: {i}\n"
+            + f"# Last generation: {generations - 1}\n"
+            + "# "
+            + ", ".join(f"{x.strip():>20s}" for x in keys[:7])
+            + "\n"
+            + "# "
+            + ", ".join(f"{x:>20.5g}" for x in data.values[i, :7])
+            + "\n\n"
+        )
+        # f.write('# YOLOv5 Hyperparameter Evolution Results\n' + f'# Best generation: {i}\n' +
+        #         f'# Last generation: {generations - 1}\n' + '# ' + ', '.join(f'{x.strip():>20s}' for x in keys[:7]) +
+        #         '\n' + '# ' + ', '.join(f'{x:>20.5g}' for x in data.values[i, :7]) + '\n\n')
         yaml.safe_dump(data.loc[i][7:].to_dict(), f, sort_keys=False)
 
     # Print to screen
@@ -966,6 +981,36 @@ def print_mutation(results, hyp, save_dir, bucket, prefix=colorstr('evolve: ')):
     if bucket:
         os.system(f'gsutil cp {evolve_csv} {evolve_yaml} gs://{bucket}')  # upload
 
+
+def print_mutation_2(hyp, results, yaml_file='hyp_evolved.yaml', bucket=''):
+    # Print mutation results to evolve.txt (for use with train.py --evolve)
+    a = '%10s' * len(hyp) % tuple(hyp.keys())  # hyperparam keys
+    b = '%10.3g' * len(hyp) % tuple(hyp.values())  # hyperparam values
+    c = '%10.4g' * len(results) % results  # results (P, R, mAP@0.5, mAP@0.5:0.95, val_losses x 3)
+    print('\n%s\n%s\nEvolved fitness: %s\n' % (a, b, c))
+
+    if bucket:
+        url = 'gs://%s/evolve.txt' % bucket
+        if gsutil_getsize(url) > (os.path.getsize('evolve.txt') if os.path.exists('evolve.txt') else 0):
+            os.system('gsutil cp %s .' % url)  # download evolve.txt if larger than local
+
+    with open('evolve.txt', 'a') as f:  # append result
+        f.write(c + b + '\n')
+    x = np.unique(np.loadtxt('evolve.txt', ndmin=2), axis=0)  # load unique rows
+    x = x[np.argsort(-fitness(x))]  # sort
+    np.savetxt('evolve.txt', x, '%10.3g')  # save sort by fitness
+
+    # Save yaml
+    for i, k in enumerate(hyp.keys()):
+        hyp[k] = float(x[0, i + 7])
+    with open(yaml_file, 'w') as f:
+        results = tuple(x[0, :7])
+        c = '%10.4g' * len(results) % results  # results (P, R, mAP@0.5, mAP@0.5:0.95, val_losses x 3)
+        f.write('# Hyperparameter Evolution Results\n# Generations: %g\n# Metrics: ' % len(x) + c + '\n\n')
+        yaml.dump(hyp, f, sort_keys=False)
+
+    if bucket:
+        os.system('gsutil cp evolve.txt %s gs://%s' % (yaml_file, bucket))  # upload
 
 def apply_classifier(x, model, img, im0):
     # Apply a second stage classifier to YOLO outputs
@@ -1027,6 +1072,62 @@ def increment_path(path, exist_ok=False, sep='', mkdir=False):
 
     return path
 
+import subprocess
+
+def print_mutation_3(keys, results, hyp, save_dir, bucket, prefix=colorstr("evolve: ")):
+    evolve_csv = save_dir / "evolve.csv"
+    evolve_yaml = save_dir / "hyp_evolve.yaml"
+    keys = tuple(keys) + tuple(hyp.keys())  # [results + hyps]
+    keys = tuple(x.strip() for x in keys)
+    vals = results + tuple(hyp.values())
+    n = len(keys)
+
+    # Download (optional)
+    if bucket:
+        url = f"gs://{bucket}/evolve.csv"
+        if gsutil_getsize(url) > (evolve_csv.stat().st_size if evolve_csv.exists() else 0):
+            subprocess.run(["gsutil", "cp", f"{url}", f"{save_dir}"])  # download evolve.csv if larger than local
+
+    # Log to evolve.csv
+    s = "" if evolve_csv.exists() else (("%20s," * n % keys).rstrip(",") + "\n")  # add header
+    with open(evolve_csv, "a") as f:
+        f.write(s + ("%20.5g," * n % vals).rstrip(",") + "\n")
+
+    # Save yaml
+    with open(evolve_yaml, "w") as f:
+        data = pd.read_csv(evolve_csv, skipinitialspace=True)
+        data = data.rename(columns=lambda x: x.strip())  # strip keys
+        i = np.argmax(fitness(data.values[:, :4]))  #
+        generations = len(data)
+        f.write(
+            "# YOLOv5 Hyperparameter Evolution Results\n"
+            + f"# Best generation: {i}\n"
+            + f"# Last generation: {generations - 1}\n"
+            + "# "
+            + ", ".join(f"{x.strip():>20s}" for x in keys[:7])
+            + "\n"
+            + "# "
+            + ", ".join(f"{x:>20.5g}" for x in data.values[i, :7])
+            + "\n\n"
+        )
+        yaml.safe_dump(data.loc[i][7:].to_dict(), f, sort_keys=False)
+
+    # Print to screen
+    LOGGER.info(
+        prefix
+        + f"{generations} generations finished, current result:\n"
+        + prefix
+        + ", ".join(f"{x.strip():>20s}" for x in keys)
+        + "\n"
+        + prefix
+        + ", ".join(f"{x:20.5g}" for x in vals)
+        + "\n\n"
+    )
+
+    if bucket:
+        subprocess.run(["gsutil", "cp", f"{evolve_csv}", f"{evolve_yaml}", f"gs://{bucket}"])  # upload
+
+
 
 # OpenCV Chinese-friendly functions ------------------------------------------------------------------------------------
 imshow_ = cv2.imshow  # copy to avoid recursion errors
@@ -1052,3 +1153,4 @@ cv2.imread, cv2.imwrite, cv2.imshow = imread, imwrite, imshow  # redefine
 
 # Variables ------------------------------------------------------------------------------------------------------------
 NCOLS = 0 if is_docker() else shutil.get_terminal_size().columns  # terminal window size for tqdm
+

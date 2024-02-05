@@ -13,6 +13,12 @@ def fitness(x):
     w = [0.0, 0.0, 0.1, 0.9, 0.0, 0.0, 0.1, 0.9]
     return (x[:, :8] * w).sum(1)
 
+def fitness_seg(x):
+    # Model fitness as a weighted combination of metrics
+    # B is detection, M is segmentation
+    w = [0.0, 0.0, 0.05, 0.45, 0, 0, 0.05, 0.45]  # weights for [P(B), R(B), mAP@0.5(B), mAP@0.5:0.95(B),P(M), R(M), mAP@0.5(M), mAP@0.5:0.95(M)]
+    return (x[:, :8] * w).sum(1)
+
 
 def ap_per_class_box_and_mask(
         tp_m,

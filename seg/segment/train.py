@@ -51,12 +51,12 @@ from utils.downloads import attempt_download, is_url
 from utils.general import (LOGGER, check_amp, check_dataset, check_file, check_git_status, check_img_size,
                            check_requirements, check_suffix, check_yaml, colorstr, get_latest_run, increment_path,
                            init_seeds, intersect_dicts, labels_to_class_weights, labels_to_image_weights, one_cycle,
-                           print_args, print_mutation, strip_optimizer, yaml_save)
+                           print_args, print_mutation, strip_optimizer, yaml_save, print_mutation_3)
 from utils.loggers import GenericLogger
 from utils.plots import plot_evolve, plot_labels
 from utils.segment.dataloaders import create_dataloader
 from utils.segment.loss import ComputeLoss
-from utils.segment.metrics import KEYS, fitness
+from utils.segment.metrics import KEYS, fitness_seg
 from utils.segment.plots import plot_images_and_masks, plot_results_with_masks
 from utils.torch_utils import (EarlyStopping, ModelEMA, de_parallel, select_device, smart_DDP, smart_optimizer,
                                smart_resume, torch_distributed_zero_first)
@@ -385,7 +385,7 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
                                                 overlap=overlap)
 
             # Update best mAP
-            fi = fitness(np.array(results).reshape(1, -1))  # weighted combination of [P, R, mAP@.5, mAP@.5-.95]
+            fi = fitness_seg(np.array(results).reshape(1, -1))  # weighted combination of [P(B), R(B), mAP@.5(B), mAP@.5-.95(B), P(M), R(M), mAP@.5(M), mAP@.5-.95(M)]
             stop = stopper(epoch=epoch, fitness=fi)  # early stop check
             if fi > best_fitness:
                 best_fitness = fi
@@ -593,22 +593,22 @@ def main(opt, callbacks=Callbacks()):
             'obj': (1, 0.2, 4.0),  # obj loss gain (scale with pixels)
             'obj_pw': (1, 0.5, 2.0),  # obj BCELoss positive_weight
             'iou_t': (0, 0.1, 0.7),  # IoU training threshold
-            'anchor_t': (1, 2.0, 8.0),  # anchor-multiple threshold
-            'anchors': (2, 2.0, 10.0),  # anchors per output grid (0 to ignore)
+            'anchor_t': (4, 4, 4),  # anchor-multiple threshold
+            'anchors': (0.0, 0.0, 0.0),  # anchors per output grid (0 to ignore)
             'fl_gamma': (0, 0.0, 2.0),  # focal loss gamma (efficientDet default gamma=1.5)
             'hsv_h': (1, 0.0, 0.1),  # image HSV-Hue augmentation (fraction)
             'hsv_s': (1, 0.0, 0.9),  # image HSV-Saturation augmentation (fraction)
             'hsv_v': (1, 0.0, 0.9),  # image HSV-Value augmentation (fraction)
-            'degrees': (1, 0.0, 45.0),  # image rotation (+/- deg)
-            'translate': (1, 0.0, 0.9),  # image translation (+/- fraction)
-            'scale': (1, 0.0, 0.9),  # image scale (+/- gain)
-            'shear': (1, 0.0, 10.0),  # image shear (+/- deg)
-            'perspective': (0, 0.0, 0.001),  # image perspective (+/- fraction), range 0-0.001
-            'flipud': (1, 0.0, 1.0),  # image flip up-down (probability)
-            'fliplr': (0, 0.0, 1.0),  # image flip left-right (probability)
-            'mosaic': (1, 0.0, 1.0),  # image mixup (probability)
-            'mixup': (1, 0.0, 1.0),  # image mixup (probability)
-            'copy_paste': (1, 0.0, 1.0)}  # segment copy-paste (probability)
+            'degrees': (0.0, 0.0, 0.0),  # image rotation (+/- deg)
+            'translate': (0.0, 0.0, 0.0),  # image translation (+/- fraction)
+            'scale': (0.0, 0.0, 0.0),  # image scale (+/- gain)
+            'shear': (0.0, 0.0, 0.0),  # image shear (+/- deg)
+            'perspective': (0.0, 0.0, 0.0),  # image perspective (+/- fraction), range 0-0.001
+            'flipud': (0.0, 0.0, 0.0),  # image flip up-down (probability)
+            'fliplr': (0.0, 0.0, 0.0),  # image flip left-right (probability)
+            'mosaic': (0.0, 0.0, 0.0),  # image mixup (probability)
+            'mixup': (0.0, 0.0, 0.0),  # image mixup (probability)
+            'copy_paste': (0.0, 0.0, 0.0)}  # segment copy-paste (probability)
 
         with open(opt.hyp, errors='ignore') as f:
             hyp = yaml.safe_load(f)  # load hyps dict
@@ -628,8 +628,8 @@ def main(opt, callbacks=Callbacks()):
                 parent = 'single'  # parent selection method: 'single' or 'weighted'
                 x = np.loadtxt(evolve_csv, ndmin=2, delimiter=',', skiprows=1)
                 n = min(5, len(x))  # number of previous results to consider
-                x = x[np.argsort(-fitness(x))][:n]  # top n mutations
-                w = fitness(x) - fitness(x).min() + 1E-6  # weights (sum > 0)
+                x = x[np.argsort(-fitness_seg(x))][:n]  # top n mutations
+                w = fitness_seg(x) - fitness_seg(x).min() + 1E-6  # weights (sum > 0)
                 if parent == 'single' or len(x) == 1:
                     # x = x[random.randint(0, n - 1)]  # random selection
                     x = x[random.choices(range(n), weights=w)[0]]  # weighted selection

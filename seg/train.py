@@ -557,7 +557,8 @@ def main(opt, callbacks=Callbacks()):
             'fliplr': (0, 0.0, 1.0),  # image flip left-right (probability)
             'mosaic': (1, 0.0, 1.0),  # image mixup (probability)
             'mixup': (1, 0.0, 1.0),  # image mixup (probability)
-            'copy_paste': (1, 0.0, 1.0)}  # segment copy-paste (probability)
+            'copy_paste': (1, 0.0, 1.0),  # segment copy-paste (probability)
+            'loss_ota': (0, 0, 0)}
 
         with open(opt.hyp, errors='ignore') as f:
             hyp = yaml.safe_load(f)  # load hyps dict
